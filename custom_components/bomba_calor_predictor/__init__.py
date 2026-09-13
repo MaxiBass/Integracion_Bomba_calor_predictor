@@ -33,6 +33,7 @@ SERVICE_SET_LR_SCHEMA = vol.Schema({
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Inicializa la integraciÃ³n."""
+    _LOGGER.info("Bomba Calor Predictor: prueba de actualización vía HACS OK (marca updatetest-01)")
     hass.data.setdefault(DOMAIN, {})
 
     merged_config = {**entry.data, **entry.options}
