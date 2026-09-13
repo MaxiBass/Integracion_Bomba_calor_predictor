@@ -1,0 +1,24 @@
+reset_modelo:
+  name: Reset modelo
+  description: >
+    Resetea los pesos W0 y W2 de ambos modos (Silent y Boost) a los valores
+    del fabricante SC984. Útil si el modelo ha divergido o quieres empezar
+    de cero tras cambios en la instalación.
+
+set_learning_rate:
+  name: Cambiar learning rate
+  description: >
+    Ajusta la velocidad de aprendizaje del SGD en caliente, sin reiniciar
+    la integración. Valores recomendados: 0.0005 (arranque), 0.0002
+    (refinamiento), 0.00005 (mantenimiento estable).
+  fields:
+    learning_rate:
+      name: Learning rate
+      description: "Valor entre 0.000001 y 0.1. Recomendado inicial: 0.0005"
+      required: true
+      example: 0.0005
+      selector:
+        number:
+          min: 0.000001
+          max: 0.1
+          mode: box

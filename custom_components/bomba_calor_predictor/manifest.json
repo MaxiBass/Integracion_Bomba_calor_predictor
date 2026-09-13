@@ -1,0 +1,12 @@
+{
+  "domain": "bomba_calor_predictor",
+  "name": "Bomba Calor Predictor (SC984)",
+  "version": "1.0.0",
+  "description": "Predicción adaptativa de consumo eléctrico de bomba de calor piscina SC984 mediante regresión lineal online (SGD). Modelos independientes por modo Silent/Boost.",
+  "documentation": "https://github.com/local/bomba_calor_predictor",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "local_push",
+  "config_flow": true
+}

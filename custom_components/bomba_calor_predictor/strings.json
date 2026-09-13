@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bomba Calor Predictor SC984",
+        "description": "Configura los sensores de tu instalación. Los entity_ids deben existir en Home Assistant.",
+        "data": {
+          "sensor_t_agua":     "Sensor temperatura agua piscina",
+          "sensor_consumo":    "Sensor consumo bomba de calor (W)",
+          "sensor_modo":       "Select modo bomba de calor",
+          "switch_bomba":      "Switch bomba de calor",
+          "number_setpoint":   "Number setpoint temperatura (number.temperatura_deseada)",
+          "modo_silent_value": "Valor del modo Silencioso (ej: Silent_heat)",
+          "modo_boost_value":  "Valor del modo Boost (ej: Boost_heat)",
+          "learning_rate":     "Learning rate SGD (por defecto 0.0001)"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entidad no encontrada en Home Assistant"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones",
+        "data": {
+          "learning_rate":  "Learning rate SGD",
+          "sensor_t_agua":  "Sensor temperatura agua piscina",
+          "sensor_consumo": "Sensor consumo bomba de calor (W)"
+        }
+      }
+    }
+  },
+  "services": {
+    "reset_modelo": {
+      "name": "Reset modelo",
+      "description": "Resetea los pesos W0 y W2 de ambos modos (Silent y Boost) a los valores del fabricante SC984."
+    },
+    "set_learning_rate": {
+      "name": "Cambiar learning rate",
+      "description": "Ajusta la velocidad de aprendizaje del SGD en caliente.",
+      "fields": {
+        "learning_rate": {
+          "name": "Learning rate",
+          "description": "Valor entre 0.000001 y 0.1. Por defecto 0.0001."
+        }
+      }
+    }
+  }
+}
