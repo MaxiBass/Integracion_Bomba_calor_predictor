@@ -1,5 +1,5 @@
 """
-IntegraciÃ³n bomba_calor_predictor para Home Assistant.
+Integración bomba_calor_predictor para Home Assistant.
 
 Registra:
   - Coordinator (SGD cada 5 min)
@@ -32,7 +32,7 @@ SERVICE_SET_LR_SCHEMA = vol.Schema({
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Inicializa la integraciÃ³n."""
+    """Inicializa la integración."""
     _LOGGER.info("Bomba Calor Predictor: prueba de actualización vía HACS OK (marca updatetest-01)")
     hass.data.setdefault(DOMAIN, {})
 
@@ -69,7 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Descarga la integraciÃ³n limpiamente."""
+    """Descarga la integración limpiamente."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
@@ -80,6 +80,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Recarga si cambian las opciones."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    """Recarga si cambian las opciones.
+
+    Usa el mecanismo oficial de HA (no un unload+setup manual): es lo que
+    deja correctamente preparado el contexto que necesita
+    `coordinator.async_config_entry_first_refresh()` en el siguiente
+    `async_setup_entry`. Llamar a async_setup_entry a mano aquí (como se
+    hacía antes) rompía con "Detected code that uses
+    async_config_entry_first_refresh, which is only supported for
+    coordinators with a config entry" en cuanto cambiabas una opción o
+    llamabas al servicio set_learning_rate, y podía dejar la entrada en
+    un ConfigEntryState.FAILED_UNLOAD del que solo se sale reiniciando HA.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)

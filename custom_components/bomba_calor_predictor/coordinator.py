@@ -45,14 +45,14 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-def _get_float(hass: HomeAssistant, entity_id: str, default: float = 0.0) -> float | None:
+def _get_float(hass: HomeAssistant, entity_id: str, default: float | None = None) -> float | None:
     state = hass.states.get(entity_id)
     if state is None or state.state in ("unavailable", "unknown", ""):
-        return None
+        return default
     try:
         return float(state.state)
     except (ValueError, TypeError):
-        return None
+        return default
 
 
 class BombaCalorCoordinator(DataUpdateCoordinator):
