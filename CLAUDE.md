@@ -53,8 +53,8 @@ En particular:
   Por lo mismo, los sensores no cuelgan de ningún dispositivo (§R.5).
 - Solo se entrena con muestras estables; las condiciones están en
   «Solo muestras estables» y §R.1.
-- Las plantillas de casa leen `sensor.bdc_prediccion_silent`/`_boost`, que
-  no existen (§R.3): pendiente de que Maxi decida cómo corregirlo.
+- Las plantillas de casa leían `sensor.bdc_prediccion_silent`/`_boost`, que
+  no existen; corregido en el YAML el 05/10/2026 (§R.3).
 
 ## Flujo para editar
 

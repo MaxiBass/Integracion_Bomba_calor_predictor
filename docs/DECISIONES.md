@@ -257,7 +257,7 @@ También conviene consultar la traza de Home Assistant de la automatización de 
 
 ## Estado recomendado para retomar
 
-0. **Antes que nada, §R.3:** las plantillas de umbrales de la piscina leen `sensor.bdc_prediccion_silent`/`_boost`, que no existen, así que nunca han usado el modelo. Mientras no se corrija, nada de lo de abajo se puede evaluar con datos reales.
+0. Hasta el 05/10/2026 las plantillas de umbrales de la piscina leían `sensor.bdc_prediccion_silent`/`_boost`, que no existen, así que nunca usaron el modelo (§R.3, ya corregido). Lo de abajo solo se puede evaluar con datos posteriores a esa fecha.
 1. Mantener el apagado global existente basado en `sensor.balance_fv_produccion_consumo` si el objetivo es evitar importación de red/descarga de batería.
 2. Cambiar Silent→Boost a evaluación por estado/plantilla para que cambios de `piscina_umbral_subida_boost` puedan disparar la reevaluación.
 3. Aplicar el mismo mecanismo al encendido si se usa `piscina_umbral_encendido` dinámico.
@@ -354,9 +354,40 @@ Consecuencias:
 - «Piscina Fallo Bomba de Calor» **no puede saltar nunca**: el consumo
   esperado sale 0 y la condición exige `esperado > 0`.
 
-No se ha tocado (es la configuración de casa, no la integración). Las dos
-salidas: cambiar las plantillas a los nombres reales, o renombrar los dos
-entity_id en HA a los que usan las plantillas. Lo decide Maxi.
+**Corregido el 05/10/2026** en `packages/piscina/piscina.yaml` (decisión
+de Maxi): las plantillas leen ahora `sensor.bdc_prediccion_consumo_silent`
+y `…_boost`. No se renombraron los entity_id, para no tocar la integración
+ni el histórico. Solo se cambiaron los nombres: los valores de reserva del
+`float()` (800/2300) y los márgenes siguen igual. Entra en vigor al
+recargar las entidades de plantilla o reiniciar HA.
+
+Efecto, con los valores de ese día (Silent 1200 W, Boost 2000 W,
+depuradora 1070 W, márgenes 150/300 W):
+
+| Umbral | Antes (reserva) | Con el modelo | ¿Lo usa alguna automatización? |
+|---|---|---|---|
+| Encendido | 2020 W | 2420 W | sí: «Encender depuradora y bomba según excedente» |
+| Subida a Boost | 3520 W | 3220 W | sí: esa misma y «Subir de Silent a Boost con excedente» |
+| Apagado | 1570 W | 1970 W | no (solo se muestra) |
+| Bajada a Silent | 3070 W | 2770 W | no (solo se muestra) |
+
+- **Arrancar exige 400 W más.** Con 2020 W la bomba arrancaba sin cubrir
+  su consumo real (depuradora + Silent ≈ 2230–2400 W) y la regla «Bomba/
+  Depuradora Off - < 100W» (balance FV < 100 W durante 15 min) la volvía
+  a apagar: el 04/10 y el 05/10 hubo tres encendidos de solo 18–24 min
+  (p. ej. 13:32→13:50 UTC del 05/10, según el logbook). Ahora arranca
+  menos veces en el límite, pero sin esos ciclos.
+- **Boost es 300 W más fácil de alcanzar**, como se diseñó. Desde el 01/09
+  no había entrado nunca en Boost.
+- **«Piscina Fallo Bomba de Calor» empieza a funcionar**: salta si, con
+  la bomba encendida y sin llegar a la temperatura, consume menos del 40 %
+  de lo previsto (480 W en Silent, 800 W en Boost) durante 5 min. El
+  compresor arranca 2–4 min después de encender el interruptor (visto el
+  05/10), así que el arranque no debería dispararla. Ninguna automatización
+  ni panel la usa todavía: solo cambia su propio estado.
+- Mientras la integración no tenga predicción (arranque de HA antes de la
+  v1.1.0, o si falla), las plantillas vuelven a los valores de reserva,
+  igual que antes.
 
 ### R.4. El tope de 1200 W en Silent se queda corto en los picos
 
