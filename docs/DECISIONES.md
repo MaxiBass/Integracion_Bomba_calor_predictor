@@ -29,7 +29,7 @@
 - El entrenamiento es online mediante SGD para que el modelo se adapte a la instalación real.
 - Se usan priors iniciales específicos de fabricante/SC984 para Silent y Boost, clamps de predicción por modo y límites de pesos.
 - Motivo: impedir divergencias y resultados físicamente absurdos mientras el modelo tiene pocas muestras o recibe muestras anómalas.
-- Las predicciones se limitan a 300–1200 W en Silent y 1500–3000 W en Boost.
+- Las predicciones se limitan a 300–1500 W en Silent (1200 W hasta la v1.1.0, ver §R.4) y 1500–3000 W en Boost.
 
 ### Solo muestras estables
 
@@ -371,14 +371,18 @@ depuradora 1070 W, márgenes 150/300 W):
 | Apagado | 1570 W | 1970 W | no (solo se muestra) |
 | Bajada a Silent | 3070 W | 2770 W | no (solo se muestra) |
 
+Con la v1.1.1 la predicción Silent deja de estar recortada a 1200 W (§R.4):
+con 1303 W, el encendido pasa a ~2520 W y el apagado a ~2070 W.
+
 - **Arrancar exige 400 W más.** Con 2020 W la bomba arrancaba sin cubrir
   su consumo real (depuradora + Silent ≈ 2230–2400 W) y la regla «Bomba/
   Depuradora Off - < 100W» (balance FV < 100 W durante 15 min) la volvía
   a apagar: el 04/10 y el 05/10 hubo tres encendidos de solo 18–24 min
   (p. ej. 13:32→13:50 UTC del 05/10, según el logbook). Ahora arranca
   menos veces en el límite, pero sin esos ciclos.
-- **Boost es 300 W más fácil de alcanzar**, como se diseñó. Desde el 01/09
-  no había entrado nunca en Boost.
+- **El umbral de Boost baja 300 W**, pero eso apenas cambia nada mientras
+  siga el fallo de `sensor.consumo_piscina` (abajo). Desde el 01/09 no
+  había entrado nunca en Boost.
 - **«Piscina Fallo Bomba de Calor» empieza a funcionar**: salta si, con
   la bomba encendida y sin llegar a la temperatura, consume menos del 40 %
   de lo previsto (480 W en Silent, 800 W en Boost) durante 5 min. El
@@ -389,14 +393,36 @@ depuradora 1070 W, márgenes 150/300 W):
   v1.1.0, o si falla), las plantillas vuelven a los valores de reserva,
   igual que antes.
 
-### R.4. El tope de 1200 W en Silent se queda corto en los picos
+**Encontrado después, sin corregir (lo decide Maxi):** el mismo
+`piscina.yaml` lee otros dos sensores que tampoco existen. Los reales del
+medidor de la piscina son `sensor.consumo_bomba_piscina` (canal A),
+`sensor.consumo_depuradora` (canal B) y `sensor.meter_piscina_power_ab`
+(la suma).
 
-Con 1136 muestras, la predicción Silent está pegada al tope (1200 W): el
+- `sensor.consumo_piscina` (en «Piscina Excedente Exportacion» y «Piscina
+  Balance Real») vale siempre 0. El excedente es solo lo que se exporta, sin
+  sumar lo que ya gasta la piscina. Con la piscina en Silent (~2400 W),
+  subir a Boost exige exportar además ~3200 W, casi imposible: esta es la
+  causa principal de que no entre nunca en Boost. Al arrancar no influye,
+  porque con todo apagado la piscina gasta ~13 W.
+- `sensor.consumo_depuradora_piscina` (en «Piscina Fallo Depuradora») vale
+  siempre 0, así que esa alarma se enciende cada vez que funciona la
+  depuradora: tres veces el 05/10. Ninguna automatización la usa.
+
+### R.4. El tope de 1200 W en Silent se quedaba corto (subido a 1500 W en la v1.1.1)
+
+Con 1136 muestras, la predicción Silent estaba pegada al tope (1200 W): el
 modelo sin recortar da ~1303 W a 26 °C. El error histórico alterna entre
 ~−150 W y ~+130 W: el consumo real en Silent va de ~1050 W a ~1330 W (sube
-según se calienta el agua). El tope queda en medio, así que no esconde una
-deriva grave, pero recorta los picos. Subirlo (p. ej. a 1500 W) es una
-decisión de calibración que no se ha tomado.
+según se calienta el agua; el 05/10, a 26 °C, 1305–1335 W). Con el tope,
+el umbral de encendido de la piscina se quedaba ~130 W corto.
+
+**Decidido el 05/10/2026 (v1.1.1): tope Silent a 1500 W.** Cubre el agua a
+32 °C (el modelo da ~1385 W) y no se solapa con Boost, que empieza en
+1500 W. El tope solo recorta la predicción publicada: el entrenamiento
+siempre ha usado la predicción sin recortar, así que el modelo aprendido no
+cambia. Lo comprueba la prueba «tope de la predicción Silent» (en rojo con
+la v1.1.0).
 
 ### R.5. Sin dispositivo, a propósito
 

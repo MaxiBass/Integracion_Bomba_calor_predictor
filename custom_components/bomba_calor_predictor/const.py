@@ -22,9 +22,14 @@ PRIORS = {
     },
 }
 
-# Clamps para evitar divergencia
+# Clamps para evitar divergencia. Solo recortan la prediccion publicada; el
+# entrenamiento usa la prediccion sin recortar.
+# Silent llegaba hasta 1200 W, pero en casa la bomba consume 1050-1330 W en
+# Silent (sube con el agua) y el modelo daba 1303 W a 26 C: la prediccion se
+# quedaba pegada al tope y el umbral de encendido de la piscina, ~130 W corto.
+# 1500 W deja margen hasta el agua a 32 C (~1385 W) sin solaparse con Boost.
 CLAMP = {
-    "silent": {"min": 300.0,  "max": 1200.0},
+    "silent": {"min": 300.0,  "max": 1500.0},
     "boost":  {"min": 1500.0, "max": 3000.0},
 }
 

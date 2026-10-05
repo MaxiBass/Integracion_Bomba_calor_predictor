@@ -1,7 +1,7 @@
 {
   "domain": "bomba_calor_predictor",
   "name": "Bomba Calor Predictor (SC984)",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "documentation": "https://github.com/MaxiBass/Integracion_Bomba_calor_predictor",
   "issue_tracker": "https://github.com/MaxiBass/Integracion_Bomba_calor_predictor/issues",
   "requirements": [],

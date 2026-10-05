@@ -251,6 +251,7 @@ async def _recorrido(directorio: Path) -> None:
                 ("entidades", _entidades),
                 ("aprendizaje", _aprendizaje),
                 ("arranque", _arranque),
+                ("tope", _tope),
                 ("servicios", _servicios),
                 ("opciones", _opciones),
                 ("diagnóstico", _diagnostico),
@@ -438,6 +439,36 @@ async def _arranque(ctx: Contexto) -> None:
     comprobar(estado != "unknown",
               f"en cuanto llega la temperatura hay predicción, sin esperar 5 minutos ({estado})")
     comprobar(ctx.muestras["boost"] == 1, "y el modelo guardado se conserva tras recargar")
+
+
+async def _tope(ctx: Contexto) -> None:
+    hass, entrada = ctx.hass, ctx.entrada
+    print("\n  · tope de la predicción Silent")
+    fichero = ctx.directorio / ".storage" / "bomba_calor_predictor_model"
+    original = fichero.read_text("utf-8")
+
+    async def predecir_con(pesos: dict) -> str:
+        contenido = json.loads(original)
+        contenido["data"]["weights"]["silent"] = pesos
+        fichero.write_text(json.dumps(contenido), "utf-8")
+        await hass.config_entries.async_reload(entrada.entry_id)
+        await hass.async_block_till_done()
+        return ctx.estado("prediccion_silent").state
+
+    # Con la bomba apagada se predice igual, pero no se entrena al recargar.
+    ctx.poner(BOMBA, "off")
+    # Pesos del modelo de casa el 05/10/2026 (1136 muestras Silent); a 26 °C
+    # la bomba consumía entre 1305 y 1335 W.
+    estado = await predecir_con({"w0": 950.633, "w2": 13.556078})
+    comprobar(estado == "1303.1",
+              f"en Silent predice lo aprendido (1303 W a 26 °C), sin recortarlo a 1200 W ({estado})")
+    estado = await predecir_con({"w0": 4000.0, "w2": 100.0})
+    comprobar(estado == "1500.0", f"pero un modelo que se dispara sigue acotado a 1500 W ({estado})")
+
+    fichero.write_text(original, "utf-8")
+    ctx.poner(BOMBA, "on")
+    await hass.config_entries.async_reload(entrada.entry_id)
+    await hass.async_block_till_done()
 
 
 async def _servicios(ctx: Contexto) -> None:
