@@ -3,7 +3,7 @@ Integración bomba_calor_predictor para Home Assistant.
 
 Registra:
   - Coordinator (SGD cada 5 min)
-  - Plataforma sensor (6 entidades)
+  - Plataforma sensor (6 entidades, agrupadas en un dispositivo de servicio)
   - Servicios: reset_modelo, set_learning_rate
 """
 from __future__ import annotations
@@ -13,8 +13,16 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import CONF_LEARNING_RATE, DOMAIN
+from .const import (
+    CONF_LEARNING_RATE,
+    CONF_SENSOR_T_AGUA,
+    DEFAULT_LEARNING_RATE,
+    DOMAIN,
+    MAX_LEARNING_RATE,
+    MIN_LEARNING_RATE,
+)
 from .coordinator import BombaCalorCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,22 +34,29 @@ SERVICE_SET_LR = "set_learning_rate"
 
 SERVICE_SET_LR_SCHEMA = vol.Schema({
     vol.Required("learning_rate"): vol.All(
-        vol.Coerce(float), vol.Range(min=0.000001, max=0.1)
+        vol.Coerce(float), vol.Range(min=MIN_LEARNING_RATE, max=MAX_LEARNING_RATE)
     )
 })
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Inicializa la integración."""
-    _LOGGER.info("Bomba Calor Predictor: prueba de actualización vía HACS OK (marca updatetest-01)")
     hass.data.setdefault(DOMAIN, {})
 
     merged_config = {**entry.data, **entry.options}
-    coordinator = BombaCalorCoordinator(hass, merged_config)
+    coordinator = BombaCalorCoordinator(hass, entry, merged_config)
     await coordinator.async_load()
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Si al arrancar HA aún no había temperatura del agua, se predice en
+    # cuanto llegue en vez de esperar a la siguiente lectura (5 min).
+    entry.async_on_unload(
+        async_track_state_change_event(
+            hass, [merged_config[CONF_SENSOR_T_AGUA]], coordinator.async_t_agua_cambiada
+        )
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -51,12 +66,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Servicio reset_modelo ejecutado")
 
     async def handle_set_lr(call: ServiceCall) -> None:
-        """Cambia la learning rate en caliente y la persiste en entry.options."""
+        """Cambia la learning rate y la persiste en entry.options.
+
+        El listener de abajo ve que solo ha cambiado la tasa y la aplica en
+        caliente, sin recargar la integración.
+        """
         lr = call.data["learning_rate"]
-        await coordinator.async_set_learning_rate(lr)
-        new_options = dict(entry.options)
-        new_options[CONF_LEARNING_RATE] = lr
-        hass.config_entries.async_update_entry(entry, options=new_options)
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_LEARNING_RATE: lr}
+        )
         _LOGGER.info("Learning rate cambiada a %s", lr)
 
     hass.services.async_register(DOMAIN, SERVICE_RESET, handle_reset)
@@ -80,16 +98,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Recarga si cambian las opciones.
+    """Aplica un cambio de opciones.
 
-    Usa el mecanismo oficial de HA (no un unload+setup manual): es lo que
-    deja correctamente preparado el contexto que necesita
-    `coordinator.async_config_entry_first_refresh()` en el siguiente
-    `async_setup_entry`. Llamar a async_setup_entry a mano aquí (como se
-    hacía antes) rompía con "Detected code that uses
-    async_config_entry_first_refresh, which is only supported for
-    coordinators with a config entry" en cuanto cambiabas una opción o
-    llamabas al servicio set_learning_rate, y podía dejar la entrada en
-    un ConfigEntryState.FAILED_UNLOAD del que solo se sale reiniciando HA.
+    Si solo cambia la learning rate, se aplica en caliente: recargar
+    reiniciaría el modelo en memoria y, con él, la espera de estabilidad.
+    Cualquier otro cambio (una entidad, el valor de un modo) recarga con el
+    mecanismo oficial de HA: llamar a async_setup_entry a mano (como se hacía
+    antes) rompía async_config_entry_first_refresh() y podía dejar la entrada
+    en FAILED_UNLOAD hasta reiniciar HA.
     """
+    coordinator: BombaCalorCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    nueva = {**entry.data, **entry.options}
+    if coordinator is not None:
+        actual = coordinator.config
+        if {k: v for k, v in nueva.items() if k != CONF_LEARNING_RATE} == {
+            k: v for k, v in actual.items() if k != CONF_LEARNING_RATE
+        }:
+            lr = nueva.get(CONF_LEARNING_RATE, DEFAULT_LEARNING_RATE)
+            if lr != actual.get(CONF_LEARNING_RATE, DEFAULT_LEARNING_RATE):
+                await coordinator.async_set_learning_rate(lr)
+            return
     await hass.config_entries.async_reload(entry.entry_id)

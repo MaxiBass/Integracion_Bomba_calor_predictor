@@ -8,7 +8,7 @@ reset_modelo:
 set_learning_rate:
   name: Cambiar learning rate
   description: >
-    Ajusta la velocidad de aprendizaje del SGD en caliente, sin reiniciar
+    Ajusta la velocidad de aprendizaje del SGD en caliente, sin recargar
     la integración. Valores recomendados: 0.0005 (arranque), 0.0002
     (refinamiento), 0.00005 (mantenimiento estable).
   fields:

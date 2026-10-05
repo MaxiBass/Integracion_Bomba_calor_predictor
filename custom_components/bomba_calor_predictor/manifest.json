@@ -1,12 +1,14 @@
 {
   "domain": "bomba_calor_predictor",
   "name": "Bomba Calor Predictor (SC984)",
-  "version": "1.0.2",
-  "description": "Predicción adaptativa de consumo eléctrico de bomba de calor piscina SC984 mediante regresión lineal online (SGD). Modelos independientes por modo Silent/Boost.",
-  "documentation": "https://github.com/local/bomba_calor_predictor",
+  "version": "1.1.0",
+  "documentation": "https://github.com/MaxiBass/Integracion_Bomba_calor_predictor",
+  "issue_tracker": "https://github.com/MaxiBass/Integracion_Bomba_calor_predictor/issues",
   "requirements": [],
   "dependencies": [],
-  "codeowners": [],
-  "iot_class": "local_push",
-  "config_flow": true
+  "codeowners": ["@MaxiBass"],
+  "iot_class": "calculated",
+  "config_flow": true,
+  "integration_type": "service",
+  "single_config_entry": true
 }

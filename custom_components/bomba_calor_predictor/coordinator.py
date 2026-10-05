@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -55,13 +56,28 @@ def _get_float(hass: HomeAssistant, entity_id: str, default: float | None = None
         return default
 
 
+def _minutos_desde_cambio(estado: State | None) -> float:
+    """Minutos desde que la entidad cambió de estado por última vez.
+
+    Se mira el `last_changed` de HA y no la primera lectura que lo vio: con
+    lecturas cada 5 minutos, un Silent→Boost→Silent o un apagado y encendido
+    entre dos lecturas pasaba desapercibido y se entrenaba con el consumo
+    aún en transición. Tras reiniciar HA los estados se crean de nuevo, así
+    que se vuelve a esperar MIN_TIEMPO_ESTABLE_MINUTOS (como antes).
+    """
+    if estado is None:
+        return 0.0
+    return max(0.0, (dt_util.utcnow() - estado.last_changed).total_seconds() / 60)
+
+
 class BombaCalorCoordinator(DataUpdateCoordinator):
     """Gestiona el modelo SGD y actualiza los sensores."""
 
-    def __init__(self, hass: HomeAssistant, config: dict) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, config: dict) -> None:
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=timedelta(minutes=UPDATE_INTERVAL_MINUTES),
         )
@@ -72,11 +88,12 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         self._predictions: dict = {"silent": None, "boost": None}
         self._errors: dict = {"silent": None, "boost": None}
         self._last_trained: dict = {"silent": None, "boost": None}
+        # Por qué aprendió o no en la última lectura (para el diagnóstico).
+        self.entrenamiento: dict = {}
 
-        # Tracking de estabilidad temporal (no persiste entre reinicios a proposito)
-        self._bomba_on_desde = None
-        self._modo_actual_tracked: str | None = None
-        self._modo_desde = None
+    @property
+    def config(self) -> dict:
+        return self._config
 
     async def async_load(self) -> None:
         """Carga pesos desde .storage o inicializa con priors."""
@@ -92,32 +109,36 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
             }
             _LOGGER.info("Modelo inicializado con priors SC984 (2 parametros: w0, w2)")
 
-    def _actualizar_estabilidad(
-        self, bomba_on: bool, modo_activo: str | None
-    ) -> tuple[float, float]:
-        """Actualiza timestamps de encendido/cambio de modo.
-        Devuelve (minutos_bomba_encendida, minutos_en_modo_actual)."""
-        ahora = dt_util.utcnow()
+    def _calcular_predicciones(self, t_agua: float) -> None:
+        """Predicciones para AMBOS modos: consumo = w0 + w2*T_agua."""
+        for modo_key in ("silent", "boost"):
+            w = self._weights[modo_key]
+            pred = w["w0"] + w["w2"] * t_agua
+            pred = _clamp(pred, CLAMP[modo_key]["min"], CLAMP[modo_key]["max"])
+            self._predictions[modo_key] = round(pred, 1)
 
-        if bomba_on:
-            if self._bomba_on_desde is None:
-                self._bomba_on_desde = ahora
-        else:
-            self._bomba_on_desde = None
+    def _snapshot(self) -> dict:
+        return {
+            "predictions": dict(self._predictions),
+            "errors":      dict(self._errors),
+            "samples":     dict(self._samples),
+            "weights":     {k: dict(v) for k, v in self._weights.items()},
+        }
 
-        if modo_activo != self._modo_actual_tracked:
-            self._modo_actual_tracked = modo_activo
-            self._modo_desde = ahora if modo_activo is not None else None
-
-        minutos_bomba = (
-            (ahora - self._bomba_on_desde).total_seconds() / 60
-            if self._bomba_on_desde else 0.0
-        )
-        minutos_modo = (
-            (ahora - self._modo_desde).total_seconds() / 60
-            if self._modo_desde else 0.0
-        )
-        return minutos_bomba, minutos_modo
+    @callback
+    def async_t_agua_cambiada(self, event: Event[EventStateChangedData]) -> None:
+        """Al arrancar HA, la temperatura del agua suele llegar después de la
+        primera lectura: sin esto las predicciones se quedaban en «unknown»
+        hasta la siguiente, 5 minutos más tarde, y las plantillas de umbrales
+        usaban mientras tanto su valor de reserva. Solo calcula predicciones
+        (no entrena) y solo mientras falten."""
+        if None not in self._predictions.values():
+            return
+        t_agua = _get_float(self.hass, self._config[CONF_SENSOR_T_AGUA])
+        if t_agua is None:
+            return
+        self._calcular_predicciones(t_agua)
+        self.async_set_updated_data(self._snapshot())
 
     async def _async_update_data(self) -> dict:
         """Llamado cada UPDATE_INTERVAL_MINUTES. Lee sensores, entrena si hay muestra valida."""
@@ -125,7 +146,10 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
 
         t_agua   = _get_float(self.hass, cfg[CONF_SENSOR_T_AGUA])
         consumo  = _get_float(self.hass, cfg[CONF_SENSOR_CONSUMO])
-        setpoint = _get_float(self.hass, cfg[CONF_NUMBER_SETPOINT], default=28.0)
+        # Sin valor por defecto: con la consigna desconocida no se sabe si
+        # la bomba está modulando cerca de ella, y no se entrena (antes se
+        # suponían 28 °C y se aprendía igualmente).
+        setpoint = _get_float(self.hass, cfg[CONF_NUMBER_SETPOINT])
 
         estado_bomba = self.hass.states.get(cfg[CONF_SWITCH_BOMBA])
         estado_modo  = self.hass.states.get(cfg[CONF_SENSOR_MODO])
@@ -142,31 +166,37 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         else:
             modo_activo = None
 
-        minutos_bomba, minutos_modo = self._actualizar_estabilidad(bomba_on, modo_activo)
+        minutos_bomba = _minutos_desde_cambio(estado_bomba) if bomba_on else 0.0
+        minutos_modo = _minutos_desde_cambio(estado_modo) if modo_activo else 0.0
 
-        # Predicciones para AMBOS modos: consumo = w0 + w2*T_agua
         if t_agua is not None:
-            for modo_key in ("silent", "boost"):
-                w = self._weights[modo_key]
-                pred = w["w0"] + w["w2"] * t_agua
-                pred = _clamp(pred, CLAMP[modo_key]["min"], CLAMP[modo_key]["max"])
-                self._predictions[modo_key] = round(pred, 1)
+            self._calcular_predicciones(t_agua)
 
         if modo_activo and consumo is not None and self._predictions[modo_activo] is not None:
             self._errors[modo_activo] = round(consumo - self._predictions[modo_activo], 1)
 
         # ENTRENAMIENTO SGD
-        can_train = (
-            bomba_on
-            and modo_activo is not None
-            and t_agua is not None
-            and consumo is not None
-            and consumo > MIN_CONSUMO_VALIDO
-            and setpoint is not None
-            and t_agua < (setpoint - MARGEN_MODULACION)
-            and minutos_bomba >= MIN_TIEMPO_ESTABLE_MINUTOS
-            and minutos_modo  >= MIN_TIEMPO_ESTABLE_MINUTOS
-        )
+        condiciones = {
+            "bomba_encendida": bomba_on,
+            "modo_reconocido": modo_activo is not None,
+            "t_agua_valida": t_agua is not None,
+            "consumo_valido": consumo is not None and consumo > MIN_CONSUMO_VALIDO,
+            "consigna_conocida": setpoint is not None,
+            "lejos_de_la_consigna": (
+                t_agua is not None and setpoint is not None
+                and t_agua < (setpoint - MARGEN_MODULACION)
+            ),
+            "bomba_estable": minutos_bomba >= MIN_TIEMPO_ESTABLE_MINUTOS,
+            "modo_estable": minutos_modo >= MIN_TIEMPO_ESTABLE_MINUTOS,
+        }
+        can_train = all(condiciones.values())
+        self.entrenamiento = {
+            "can_train": can_train,
+            "modo": modo_activo,
+            "minutos_bomba": round(minutos_bomba, 1),
+            "minutos_modo": round(minutos_modo, 1),
+            "condiciones": condiciones,
+        }
 
         if can_train:
             lr = cfg.get(CONF_LEARNING_RATE, DEFAULT_LEARNING_RATE)
@@ -196,17 +226,11 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
             })
         elif bomba_on and modo_activo is not None:
             _LOGGER.debug(
-                "SGD %s: muestra descartada (estable_bomba=%.1fmin estable_modo=%.1fmin, "
-                "se requieren %d min)",
-                modo_activo, minutos_bomba, minutos_modo, MIN_TIEMPO_ESTABLE_MINUTOS,
+                "SGD %s: muestra descartada (%s)",
+                modo_activo, [k for k, v in condiciones.items() if not v],
             )
 
-        return {
-            "predictions": dict(self._predictions),
-            "errors":      dict(self._errors),
-            "samples":     dict(self._samples),
-            "weights":     {k: dict(v) for k, v in self._weights.items()},
-        }
+        return self._snapshot()
 
     async def async_reset_model(self) -> None:
         """Resetea pesos a los priors SC984."""
@@ -238,3 +262,7 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
     @property
     def weights(self) -> dict:
         return self._weights
+
+    @property
+    def last_trained(self) -> dict:
+        return self._last_trained

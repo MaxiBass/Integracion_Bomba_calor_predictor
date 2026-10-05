@@ -35,6 +35,10 @@ WEIGHT_LIMITS = {
 }
 
 DEFAULT_LEARNING_RATE = 0.0001
+# Mismo rango en el alta, las opciones y el servicio set_learning_rate: con 0
+# el modelo no aprende nunca, y por encima de 0.1 diverge en pocas muestras.
+MIN_LEARNING_RATE = 0.000001
+MAX_LEARNING_RATE = 0.1
 MIN_CONSUMO_VALIDO = 200.0
 MARGEN_MODULACION = 1.0
 MIN_TIEMPO_ESTABLE_MINUTOS = 10

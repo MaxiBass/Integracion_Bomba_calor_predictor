@@ -37,6 +37,7 @@
 - Requisitos de entrenamiento: bomba encendida, modo reconocido, valores válidos de agua/consumo/setpoint, consumo por encima de 200 W, agua al menos 1 °C por debajo del setpoint, y al menos 10 minutos desde encendido y desde el último cambio de modo.
 - Motivo: evitar que el consumo transitorio de ventilador/compresor, cambios Silent↔Boost a medio camino o modulación térmica contaminen el modelo.
 - Los temporizadores de estabilidad no persisten tras reiniciar Home Assistant de forma deliberada; después de un reinicio se vuelve a esperar 10 minutos antes de entrenar.
+- Desde la v1.1.0 los 10 minutos se cuentan desde el `last_changed` del interruptor y del selector de modo, no desde la primera lectura que vio el cambio (ver §R.1). Tras un reinicio HA vuelve a crear los estados, así que la espera de 10 minutos se mantiene.
 
 ### Actualización cada 5 minutos
 
@@ -217,8 +218,8 @@ Para una evaluación determinista de un evento fallido se pidió recopilar simul
 - `sensor.piscina_excedente_exportacion`
 - `sensor.piscina_umbral_encendido`
 - `sensor.piscina_umbral_subida_boost`
-- `sensor.bdc_prediccion_silent`
-- `sensor.bdc_prediccion_boost`
+- `sensor.bdc_prediccion_consumo_silent` (aquí ponía `sensor.bdc_prediccion_silent`, que no existe: ver §R.3)
+- `sensor.bdc_prediccion_consumo_boost`
 - `sensor.bdc_muestras_silent`
 - `sensor.bdc_muestras_boost`
 - atributos `w0_base`, `w2_t_agua` y `muestras` de ambas predicciones.
@@ -240,7 +241,7 @@ También conviene consultar la traza de Home Assistant de la automatización de 
 - El modelo aprende solo muestras estables, por diseño. Si Boost dura siempre menos de 10 minutos, no generará muestras de entrenamiento aunque el cambio de modo funcione.
 - Tras reiniciar Home Assistant se descartan 10 minutos de potencial entrenamiento hasta que la bomba y el modo vuelvan a ser estables.
 - Los clamps limitan salidas por seguridad: pueden ocultar una deriva de pesos si el consumo real sale persistentemente fuera de los rangos configurados.
-- `last_trained` existe internamente, pero no se expone como sensor en el conjunto actual de seis entidades.
+- `last_trained` existe internamente, pero no se expone como sensor en el conjunto actual de seis entidades. Desde la v1.1.0 sale en el diagnóstico (se pierde al reiniciar).
 
 ### Limitaciones de control
 
@@ -256,8 +257,134 @@ También conviene consultar la traza de Home Assistant de la automatización de 
 
 ## Estado recomendado para retomar
 
+0. **Antes que nada, §R.3:** las plantillas de umbrales de la piscina leen `sensor.bdc_prediccion_silent`/`_boost`, que no existen, así que nunca han usado el modelo. Mientras no se corrija, nada de lo de abajo se puede evaluar con datos reales.
 1. Mantener el apagado global existente basado en `sensor.balance_fv_produccion_consumo` si el objetivo es evitar importación de red/descarga de batería.
 2. Cambiar Silent→Boost a evaluación por estado/plantilla para que cambios de `piscina_umbral_subida_boost` puedan disparar la reevaluación.
 3. Aplicar el mismo mecanismo al encendido si se usa `piscina_umbral_encendido` dinámico.
 4. Verificar trazas y capturar los estados anteriores durante un episodio donde debería haber Boost.
 5. Solo después ajustar `piscina_margen_subida`; partir de 150 W y subirlo o bajarlo con datos reales, sin tocar `margen_bajada` para resolver un problema de entrada en Boost.
+
+---
+
+## R. Revisión al pasarla al estándar de las demás (v1.1.0, 05/10/2026)
+
+Hasta la 1.0.2 el repo tenía el código y este documento, pero no pruebas,
+ni traducciones que HA cargue, ni icono que HA lea, ni diagnóstico. Se puso
+al nivel de Riego, Matrículas, Omada IP Groups y Cointra. Primero se
+escribieron las pruebas (`tests/test_bomba_calor_predictor.py`: un HA
+2026.9.4 real, con las entidades de origen puestas a mano y un reloj falso
+para simular los 10 minutos de estabilidad) y se pasaron contra la 1.0.2:
+todos los fallos de §R.1 salieron en rojo antes de tocar el código.
+
+### R.1. Fallos encontrados
+
+1. **El formulario salía con las claves en crudo** (`sensor_t_agua`,
+   `entity_not_found`…): una integración custom solo carga los textos de
+   `translations/<idioma>.json`; `strings.json` solo lo usa el núcleo de HA
+   al compilar. Ahora hay `translations/es.json` (igual a `strings.json`) y
+   `en.json`.
+2. **Se podía dar de alta dos veces, y las dos entradas se pisaban el
+   modelo**: todas guardan en el mismo fichero
+   (`.storage/bomba_calor_predictor_model`). En casa pasó: en el registro
+   quedan como borrados seis sensores `…_2` de una segunda entrada de
+   septiembre. Ahora `single_config_entry: true`.
+3. **Se entrenaba con la consigna desconocida.** El commit 010f6df hizo que
+   `_get_float` respetase su `default`, con lo que una consigna no
+   disponible pasaba a valer 28 °C y se entrenaba igualmente, aunque los
+   requisitos de arriba piden «valores válidos de … setpoint» (la
+   comprobación `setpoint is not None` del código quedó sin efecto). Si la
+   consigna real es más baja, se aprendían muestras con la bomba
+   modulando. Ahora, sin consigna, no se entrena.
+4. **Un cambio de modo o un apagado entre dos lecturas no se veía.** La
+   estabilidad se medía desde la primera lectura (cada 5 min) que veía el
+   modo o la bomba encendida: un Silent→Boost→Silent o un off→on entre dos
+   lecturas no reiniciaba la cuenta y se entrenaba con el consumo en
+   transición. Con las automatizaciones de Silent↔Boost de 2 minutos es
+   un caso real. Ahora se usa el `last_changed` de HA.
+5. **Tras reiniciar HA no había predicción durante 5 minutos.** La primera
+   lectura se hace antes de que exista la temperatura del agua; en casa se
+   ve en el histórico: `unknown` de 20:20 a 20:25 y de 21:09 a 21:14 el
+   04/10. Mientras, las plantillas usan su valor de reserva. Ahora se
+   predice en cuanto llega la temperatura (sin entrenar).
+6. **`set_learning_rate` recargaba la integración** (el listener de
+   opciones recarga ante cualquier cambio), en contra de lo que dice el
+   servicio («en caliente, sin reiniciar»), y reiniciaba la espera de
+   estabilidad. Ahora, si solo cambia la tasa, se aplica sin recargar.
+7. **Las opciones solo dejaban cambiar tres campos y no comprobaban
+   nada**: una entidad mal escrita dejaba el modelo sin datos sin avisar.
+   Ahora se pueden cambiar todos, con las mismas comprobaciones que el alta
+   y selectores de entidad.
+8. **La learning rate no tenía límites en el alta ni en las opciones** (sí
+   en el servicio): con 0 el modelo no aprende nunca. Ahora el mismo rango
+   en los tres sitios: 0,000001–0,1.
+9. Manifest: `iot_class` decía `local_push` (calcula a partir de otras
+   entidades: `calculated`), `documentation` apuntaba a
+   `github.com/local/…`, sin `codeowners` ni `issue_tracker`, y una clave
+   `description` que el manifest no admite.
+10. La marca de prueba de HACS de la 1.0.1 (`updatetest-01`) seguía
+    escribiéndose en el log en cada arranque.
+
+### R.2. Añadido para seguir el estándar
+
+- `diagnostics.py`: configuración en uso, pesos, muestras, predicciones,
+  `last_trained`, el estado de cada entidad de origen con su `last_changed`
+  y qué condición de entrenamiento faltaba en la última lectura. Es lo que
+  hubo que pedir a mano en el incidente de Boost.
+- Icono propio en `brand/` (el mismo dibujo que el `icon.png`/`logo.png`
+  de la raíz, que nadie leía y tenía las esquinas blancas), generado por
+  `docs/icono/generar.py`.
+- Reauth y reconfigurar no aplican: no hay cuenta ni conexión. Las
+  entidades se cambian desde Opciones.
+
+### R.3. Las plantillas de la piscina leen sensores que no existen
+
+Encontrado al revisar en casa, fuera de este repositorio (está en
+`packages/piscina/piscina.yaml` del HA). Los sensores se llaman
+`sensor.bdc_prediccion_consumo_silent` y `…_boost` (HA genera el entity_id
+a partir del nombre «BDC Prediccion Consumo …»), pero las plantillas, el
+docstring de `sensor.py` y este documento usaban `sensor.bdc_prediccion_silent`
+y `…_boost`, que no existen. Comprobado el 05/10 con `states()`: `unknown`.
+Consecuencias:
+
+- Los umbrales usan siempre el valor de reserva del `float()`: 800 W en
+  Silent y 2300 W en Boost. El de subida a Boost salía 3520 W en vez de
+  ~3220 W con el modelo (2000 W), así que **Boost era más difícil de
+  alcanzar de lo previsto**: encaja con el incidente «los cálculos son
+  correctos pero Boost no se activa».
+- «Piscina Fallo Bomba de Calor» **no puede saltar nunca**: el consumo
+  esperado sale 0 y la condición exige `esperado > 0`.
+
+No se ha tocado (es la configuración de casa, no la integración). Las dos
+salidas: cambiar las plantillas a los nombres reales, o renombrar los dos
+entity_id en HA a los que usan las plantillas. Lo decide Maxi.
+
+### R.4. El tope de 1200 W en Silent se queda corto en los picos
+
+Con 1136 muestras, la predicción Silent está pegada al tope (1200 W): el
+modelo sin recortar da ~1303 W a 26 °C. El error histórico alterna entre
+~−150 W y ~+130 W: el consumo real en Silent va de ~1050 W a ~1330 W (sube
+según se calienta el agua). El tope queda en medio, así que no esconde una
+deriva grave, pero recorta los picos. Subirlo (p. ej. a 1500 W) es una
+decisión de calibración que no se ha tomado.
+
+### R.5. Sin dispositivo, a propósito
+
+Se probó a agrupar los seis sensores en un dispositivo de servicio, como en
+las demás integraciones. En HA 2026.9 eso hace que una instalación nueva
+genere los entity_id con el nombre del dispositivo delante
+(`sensor.bomba_calor_predictor_sc984_bdc_…`); en casa no cambiarían (los fija
+el registro), pero cualquier reinstalación rompería las plantillas. No
+compensa en una integración que solo calcula.
+
+### R.6. Identificadores y datos que no se deben cambiar
+
+- `unique_id`: `{entry_id}_{prediccion|error|muestras}_{silent|boost}`.
+- Nombres de las entidades (de ellos salen los entity_id en una instalación
+  nueva): «BDC Prediccion Consumo Silent/Boost», «BDC Error Prediccion
+  Silent/Boost», «BDC Muestras Silent/Boost».
+- La entrada es la versión 1; `data` con las claves del formulario y
+  `options` con las que se cambien después (pisan a `data`). La de casa
+  tiene además `sensor_t_ext`, de la versión de tres parámetros: no molesta.
+- El modelo se guarda en `.storage/bomba_calor_predictor_model` y **no se
+  borra al quitar la integración**: al darla de alta de nuevo, recupera lo
+  aprendido.

@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heat Pump Predictor SC984",
+        "description": "Set up the sensors of your installation. The entities must exist in Home Assistant.",
+        "data": {
+          "sensor_t_agua": "Pool water temperature sensor",
+          "sensor_consumo": "Heat pump power sensor (W)",
+          "sensor_modo": "Heat pump mode select",
+          "switch_bomba": "Heat pump switch",
+          "number_setpoint": "Target temperature (setpoint)",
+          "modo_silent_value": "Silent mode value (e.g. Silent_heat)",
+          "modo_boost_value": "Boost mode value (e.g. Boost_heat)",
+          "learning_rate": "SGD learning rate (default 0.0001)"
+        },
+        "data_description": {
+          "modo_silent_value": "Exactly as the mode select publishes it, including case and underscores: if it does not match, the Silent model never learns.",
+          "modo_boost_value": "Exactly as the mode select publishes it, including case and underscores: if it does not match, the Boost model never learns.",
+          "learning_rate": "Between 0.000001 and 0.1. Suggested: 0.0005 to start, 0.0002 to refine, 0.00005 for maintenance."
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entity not found in Home Assistant"
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured. Only one is allowed: they would all store the model in the same file and overwrite each other's weights."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "A learning rate change applies immediately. Changing an entity or a mode value reloads the integration (the learned model is kept).",
+        "data": {
+          "sensor_t_agua": "Pool water temperature sensor",
+          "sensor_consumo": "Heat pump power sensor (W)",
+          "sensor_modo": "Heat pump mode select",
+          "switch_bomba": "Heat pump switch",
+          "number_setpoint": "Target temperature (setpoint)",
+          "modo_silent_value": "Silent mode value (e.g. Silent_heat)",
+          "modo_boost_value": "Boost mode value (e.g. Boost_heat)",
+          "learning_rate": "SGD learning rate"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entity not found in Home Assistant"
+    }
+  },
+  "services": {
+    "reset_modelo": {
+      "name": "Reset model",
+      "description": "Resets the W0 and W2 weights of both modes (Silent and Boost) to the SC984 manufacturer values."
+    },
+    "set_learning_rate": {
+      "name": "Change learning rate",
+      "description": "Adjusts the SGD learning rate on the fly, without reloading the integration, and stores it in the options.",
+      "fields": {
+        "learning_rate": {
+          "name": "Learning rate",
+          "description": "Value between 0.000001 and 0.1. Default 0.0001."
+        }
+      }
+    }
+  }
+}
