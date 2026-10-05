@@ -380,9 +380,9 @@ con 1303 W, el encendido pasa a ~2520 W y el apagado a ~2070 W.
   a apagar: el 04/10 y el 05/10 hubo tres encendidos de solo 18–24 min
   (p. ej. 13:32→13:50 UTC del 05/10, según el logbook). Ahora arranca
   menos veces en el límite, pero sin esos ciclos.
-- **El umbral de Boost baja 300 W**, pero eso apenas cambia nada mientras
-  siga el fallo de `sensor.consumo_piscina` (abajo). Desde el 01/09 no
-  había entrado nunca en Boost.
+- **El umbral de Boost baja 300 W**, pero por sí solo apenas cambiaba
+  nada: el fallo de `sensor.consumo_piscina` (abajo) pesaba mucho más.
+  Desde el 01/09 no había entrado nunca en Boost.
 - **«Piscina Fallo Bomba de Calor» empieza a funcionar**: salta si, con
   la bomba encendida y sin llegar a la temperatura, consume menos del 40 %
   de lo previsto (480 W en Silent, 800 W en Boost) durante 5 min. El
@@ -393,11 +393,12 @@ con 1303 W, el encendido pasa a ~2520 W y el apagado a ~2070 W.
   v1.1.0, o si falla), las plantillas vuelven a los valores de reserva,
   igual que antes.
 
-**Encontrado después, sin corregir (lo decide Maxi):** el mismo
-`piscina.yaml` lee otros dos sensores que tampoco existen. Los reales del
-medidor de la piscina son `sensor.consumo_bomba_piscina` (canal A),
-`sensor.consumo_depuradora` (canal B) y `sensor.meter_piscina_power_ab`
-(la suma).
+**Encontrado después y corregido también el 05/10 (con el visto bueno de
+Maxi):** el mismo `piscina.yaml` leía otros dos sensores que tampoco
+existen. Los reales del medidor de la piscina son
+`sensor.consumo_bomba_piscina` (canal A), `sensor.consumo_depuradora`
+(canal B) y `sensor.meter_piscina_power_ab` (la suma; comprobado: de 10 a
+11 h UTC del 05/10, 2253 W = 1179 + 1075).
 
 - `sensor.consumo_piscina` (en «Piscina Excedente Exportacion» y «Piscina
   Balance Real») vale siempre 0. El excedente es solo lo que se exporta, sin
@@ -408,6 +409,17 @@ medidor de la piscina son `sensor.consumo_bomba_piscina` (canal A),
 - `sensor.consumo_depuradora_piscina` (en «Piscina Fallo Depuradora») vale
   siempre 0, así que esa alarma se enciende cada vez que funciona la
   depuradora: tres veces el 05/10. Ninguna automatización la usa.
+
+Ahora leen `sensor.meter_piscina_power_ab` y `sensor.consumo_depuradora`
+(y el comentario de `helpers.yaml`). Nada más usa el excedente ni el
+balance de la piscina: solo las dos automatizaciones de la tabla. Efecto:
+con la bomba en Silent (~2380 W de piscina), sube a Boost si se exportan
+más de ~850 W durante 2 min. Al pasar a Boost el consumo sube ~700 W, así
+que queda poco margen: con nubes, «Bomba baja de Boost a Silent» (balance
+FV < 0 durante 2 min) puede devolverla a Silent y volver a subir, como
+mucho cada ~4 min. Si pasa, se arregla subiendo
+`input_number.piscina_margen_subida`. El 05/10 no habría entrado en Boost:
+con la bomba en marcha solo se exportaban 200–440 W.
 
 ### R.4. El tope de 1200 W en Silent se quedaba corto (subido a 1500 W en la v1.1.1)
 
