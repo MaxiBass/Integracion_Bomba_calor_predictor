@@ -3,7 +3,7 @@ Integración bomba_calor_predictor para Home Assistant.
 
 Registra:
   - Coordinator (SGD cada 5 min)
-  - Plataforma sensor (6 entidades, agrupadas en un dispositivo de servicio)
+  - Plataforma sensor (6 entidades, sin dispositivo: ver DECISIONES §R.5)
   - Servicios: reset_modelo, set_learning_rate
 """
 from __future__ import annotations
