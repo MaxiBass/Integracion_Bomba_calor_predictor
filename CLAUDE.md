@@ -30,7 +30,8 @@ usan entity_id inventados.
 ```
 custom_components/bomba_calor_predictor/
   coordinator.py  modelo SGD: lectura cada 5 min, condiciones de estabilidad, guardado
-  __init__.py     alta de la entrada, servicios, learning rate en caliente
+  __init__.py     alta de la entrada (coordinator en runtime_data), servicios
+                  (registrados en async_setup), learning rate en caliente
   sensor.py       los seis sensores (sin dispositivo, ver DECISIONES §R.5)
   config_flow.py  alta y opciones, con las mismas comprobaciones
   diagnostics.py  diagnóstico descargable
@@ -74,7 +75,7 @@ en el repo: se perdería el historial de lo que realmente se probó.
 
 ```bash
 python3 -m venv /tmp/hav
-/tmp/hav/bin/pip install homeassistant==2026.9.4 pillow
+/tmp/hav/bin/pip install homeassistant==2026.11.0 pillow
 /tmp/hav/bin/python tests/test_bomba_calor_predictor.py
 ```
 

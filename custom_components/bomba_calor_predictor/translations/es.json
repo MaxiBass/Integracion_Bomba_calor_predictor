@@ -17,7 +17,7 @@
         "data_description": {
           "modo_silent_value": "Tal cual lo publica el select del modo, con mayúsculas y guiones: si no coincide exactamente, el modelo Silent no aprende nunca.",
           "modo_boost_value": "Tal cual lo publica el select del modo, con mayúsculas y guiones: si no coincide exactamente, el modelo Boost no aprende nunca.",
-          "learning_rate": "Entre 0.000001 y 0.1. Recomendado: 0.0005 al empezar, 0.0002 para refinar, 0.00005 en mantenimiento."
+          "learning_rate": "Entre 0.000001 y 0.001. Recomendado: 0.0005 al empezar, 0.0002 para refinar, 0.00005 en mantenimiento."
         }
       }
     },
@@ -42,6 +42,11 @@
           "modo_silent_value": "Valor del modo Silencioso (ej: Silent_heat)",
           "modo_boost_value": "Valor del modo Boost (ej: Boost_heat)",
           "learning_rate": "Learning rate SGD"
+        },
+        "data_description": {
+          "modo_silent_value": "Tal cual lo publica el select del modo, con mayúsculas y guiones: si no coincide exactamente, el modelo Silent no aprende nunca.",
+          "modo_boost_value": "Tal cual lo publica el select del modo, con mayúsculas y guiones: si no coincide exactamente, el modelo Boost no aprende nunca.",
+          "learning_rate": "Entre 0.000001 y 0.001. Recomendado: 0.0005 al empezar, 0.0002 para refinar, 0.00005 en mantenimiento."
         }
       }
     },
@@ -60,9 +65,14 @@
       "fields": {
         "learning_rate": {
           "name": "Learning rate",
-          "description": "Valor entre 0.000001 y 0.1. Por defecto 0.0001."
+          "description": "Valor entre 0.000001 y 0.001. Por defecto 0.0001."
         }
       }
+    }
+  },
+  "exceptions": {
+    "no_cargada": {
+      "message": "La integración no está cargada: no hay modelo con el que trabajar."
     }
   }
 }

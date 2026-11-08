@@ -27,7 +27,10 @@ de encendido. Lo aprendido se guarda y sobrevive a reinicios.
 
 Servicios: `bomba_calor_predictor.reset_modelo` (vuelve a los valores del
 fabricante) y `bomba_calor_predictor.set_learning_rate` (cambia la
-velocidad de aprendizaje al momento).
+velocidad de aprendizaje al momento; entre 0,000001 y 0,001).
+
+El consumo puede venir en W o en kW. El error de cada modo solo tiene valor
+mientras la bomba funciona en ese modo.
 
 En la ficha de la integración (Ajustes → Dispositivos y servicios):
 
@@ -59,9 +62,11 @@ Copia `custom_components/bomba_calor_predictor` a
 
 ```bash
 python3 -m venv /tmp/hav
-/tmp/hav/bin/pip install homeassistant==2026.9.4 pillow
+/tmp/hav/bin/pip install homeassistant==2026.11.0 pillow
 /tmp/hav/bin/python tests/test_bomba_calor_predictor.py
 ```
 
 Arrancan un Home Assistant real con las entidades de origen simuladas y un
-reloj falso para no tener que esperar los 10 minutos de estabilidad.
+reloj falso para no tener que esperar los 10 minutos de estabilidad. Si
+Home Assistant no está instalado en el venv, lo avisan y terminan con
+error en vez de dar un «Todo OK» incompleto.

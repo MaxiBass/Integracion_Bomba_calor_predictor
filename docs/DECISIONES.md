@@ -51,7 +51,7 @@
 - Se expusieron servicios para resetear el modelo y cambiar la learning rate.
 - Se corrigió/pensó la persistencia de `learning_rate`: la versión actual mezcla `entry.data` y `entry.options` al iniciar, y el servicio escribe el valor actualizado en `entry.options` mediante `async_update_entry`.
 - Motivo: que los cambios de learning rate no desaparezcan tras recargar/reiniciar la integración.
-- La configuración se hace mediante Config Flow; se validan los entity_id esenciales al crear la entrada.
+- La configuración se hace mediante Config Flow; se validan los entity_id esenciales al crear la entrada y, desde la v1.1.0, también en Opciones (mismo formulario y mismas comprobaciones).
 
 ### Una única plataforma de entidades
 
@@ -439,10 +439,13 @@ la v1.1.0).
 ### R.5. Sin dispositivo, a propósito
 
 Se probó a agrupar los seis sensores en un dispositivo de servicio, como en
-las demás integraciones. En HA 2026.9 eso hace que una instalación nueva
-genere los entity_id con el nombre del dispositivo delante
-(`sensor.bomba_calor_predictor_sc984_bdc_…`); en casa no cambiarían (los fija
-el registro), pero cualquier reinstalación rompería las plantillas. No
+las demás integraciones. Con `has_entity_name = True` (lo que HA pide para
+las entidades de un dispositivo) una instalación nueva genera los entity_id
+con el nombre del dispositivo delante
+(`sensor.bomba_calor_predictor_sc984_bdc_…`); el prefijo sale de
+`has_entity_name`, no del dispositivo en sí, pero un dispositivo sin
+`has_entity_name` es justo lo que HA desaconseja. En casa no cambiarían (los
+fija el registro), pero cualquier reinstalación rompería las plantillas. No
 compensa en una integración que solo calcula.
 
 ### R.6. Identificadores y datos que no se deben cambiar
@@ -457,3 +460,47 @@ compensa en una integración que solo calcula.
 - El modelo se guarda en `.storage/bomba_calor_predictor_model` y **no se
   borra al quitar la integración**: al darla de alta de nuevo, recupera lo
   aprendido.
+
+### R.7. Revisión del 08/11/2026 (v1.1.2)
+
+**Learning rate máxima: 0,001 (antes 0,1).** El SGD usa `T_agua` sin
+centrar (~28 °C), así que cada muestra multiplica el error por
+`1 − lr·(1 + T_agua²)`: solo converge con `lr < 2 / (1 + T²)`, ~0,0025 a
+28 °C y ~0,0019 a 32 °C. El alta, las opciones y el servicio admitían hasta
+0,1, que diverge en una sola muestra y deja los pesos pegados a
+`WEIGHT_LIMITS`. Se simuló: con 0,002 y el agua a 32 °C el error crece sin
+parar; con 0,001 converge hasta ~44 °C. El tope se aplica en el
+formulario, en el servicio y también en el coordinador, por si la entrada
+guardada trae una tasa mayor de antes.
+
+**Por qué no centrar `T_agua` (entrenar con `T_agua − 28`).** Sería lo
+limpio, pero cambia el modelo de casa: hay que migrar los pesos guardados
+(`w0' = w0 + 28·w2`), los priores, los límites y los atributos `w0_base`
+que se pidieron revisar en el incidente de Boost; y, sobre todo, cambia
+cómo aprende con la tasa que ya usa (0,0005): hoy casi todo el ajuste entra
+por `w2` (gradiente ×28) y, centrado, el término independiente aprendería
+~800 veces más despacio. Con centrar tampoco valdría 0,1 (con el agua a
+20 °C, `1 + 8² = 65` → lr < 0,03). El cambio mínimo deja el modelo y lo
+aprendido igual.
+
+**Otros arreglos:**
+- Un fichero del modelo sin `silent` o `boost` (o sin `samples`) daba
+  `KeyError` en cada lectura: ahora ese modo arranca con los priores y 0
+  muestras.
+- El consumo se convierte por `unit_of_measurement`: en kW (1,3) nunca
+  pasaba de `MIN_CONSUMO_VALIDO` (200 W) y no aprendía.
+- El error de un modo vuelve a «desconocido» cuando ese modo no está
+  funcionando (antes se quedaba con el último valor).
+- `entry.runtime_data` en vez de `hass.data`; servicios registrados en
+  `async_setup` (descargada la entrada, siguen existiendo y avisan con
+  «no_cargada»); `Platform.SENSOR`, `AddConfigEntryEntitiesCallback`,
+  `STATE_UNAVAILABLE`/`STATE_UNKNOWN` y valores no finitos descartados;
+  `device_class` potencia en el sensor de error (mismos nombres y
+  `unique_id`, §R.6); `reset_modelo` olvida también los errores y la última
+  muestra.
+- El modelo se guarda con `async_delay_save` (10 min) en vez de escribir en
+  cada muestra; al descargar la entrada se escribe lo pendiente y al parar
+  HA lo hace el propio `Store`.
+- `hacs.json` pide HA ≥ 2025.2 (`AddConfigEntryEntitiesCallback`).
+- Las pruebas dan error (no «Todo OK») si se salta el bloque de HA.
+

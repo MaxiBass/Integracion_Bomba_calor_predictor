@@ -9,9 +9,16 @@ rango donde el COP es estable y T_ext no aporta poder predictivo real.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    ATTR_UNIT_OF_MEASUREMENT,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    UnitOfPower,
+)
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -37,7 +44,12 @@ from .const import (
     CONF_MODO_SILENT,
     CONF_MODO_BOOST,
     DEFAULT_LEARNING_RATE,
+    MAX_LEARNING_RATE,
+    MIN_LEARNING_RATE,
+    RETRASO_GUARDADO,
 )
+
+MODOS = ("silent", "boost")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,12 +60,25 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 def _get_float(hass: HomeAssistant, entity_id: str, default: float | None = None) -> float | None:
     state = hass.states.get(entity_id)
-    if state is None or state.state in ("unavailable", "unknown", ""):
+    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, ""):
         return default
     try:
-        return float(state.state)
+        valor = float(state.state)
     except (ValueError, TypeError):
         return default
+    return valor if math.isfinite(valor) else default
+
+
+def _get_potencia_w(hass: HomeAssistant, entity_id: str) -> float | None:
+    """Potencia en W, aunque el sensor la dé en kW (si no, 1,3 kW quedaba
+    por debajo de MIN_CONSUMO_VALIDO y el modelo no aprendía nunca)."""
+    valor = _get_float(hass, entity_id)
+    if valor is None:
+        return None
+    estado = hass.states.get(entity_id)
+    if estado.attributes.get(ATTR_UNIT_OF_MEASUREMENT) == UnitOfPower.KILO_WATT:
+        valor *= 1000
+    return valor
 
 
 def _minutos_desde_cambio(estado: State | None) -> float:
@@ -88,6 +113,8 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         self._predictions: dict = {"silent": None, "boost": None}
         self._errors: dict = {"silent": None, "boost": None}
         self._last_trained: dict = {"silent": None, "boost": None}
+        # Hay muestras aprendidas que aún no están en disco.
+        self._sin_guardar = False
         # Por qué aprendió o no en la última lectura (para el diagnóstico).
         self.entrenamiento: dict = {}
 
@@ -99,8 +126,15 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         """Carga pesos desde .storage o inicializa con priors."""
         data = await self._store.async_load()
         if data and "weights" in data:
-            self._weights = data["weights"]
-            self._samples = data.get("samples", {"silent": 0, "boost": 0})
+            # Un modo que falte en el fichero (guardado a mano o de otra
+            # versión) arranca con los priores y 0 muestras, en vez de dar
+            # KeyError en cada lectura.
+            guardados = data.get("weights") or {}
+            muestras = data.get("samples") or {}
+            self._weights = {
+                modo: {**PRIORS[modo], **(guardados.get(modo) or {})} for modo in MODOS
+            }
+            self._samples = {modo: int(muestras.get(modo, 0)) for modo in MODOS}
             _LOGGER.info("Modelo cargado desde storage: %s muestras", self._samples)
         else:
             self._weights = {
@@ -109,9 +143,23 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
             }
             _LOGGER.info("Modelo inicializado con priors SC984 (2 parametros: w0, w2)")
 
+    def _datos(self) -> dict:
+        """Lo que se guarda en disco (lo llama el Store al escribir)."""
+        self._sin_guardar = False
+        return {"weights": self._weights, "samples": self._samples}
+
+    async def async_guardar_pendiente(self) -> None:
+        """Al descargar la entrada: escribe ya lo que esté pendiente.
+
+        Sin esto, una recarga leería el fichero antes de que el guardado
+        retrasado lo actualizase y se perderían las últimas muestras.
+        """
+        if self._sin_guardar:
+            await self._store.async_save(self._datos())
+
     def _calcular_predicciones(self, t_agua: float) -> None:
         """Predicciones para AMBOS modos: consumo = w0 + w2*T_agua."""
-        for modo_key in ("silent", "boost"):
+        for modo_key in MODOS:
             w = self._weights[modo_key]
             pred = w["w0"] + w["w2"] * t_agua
             pred = _clamp(pred, CLAMP[modo_key]["min"], CLAMP[modo_key]["max"])
@@ -145,7 +193,7 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         cfg = self._config
 
         t_agua   = _get_float(self.hass, cfg[CONF_SENSOR_T_AGUA])
-        consumo  = _get_float(self.hass, cfg[CONF_SENSOR_CONSUMO])
+        consumo  = _get_potencia_w(self.hass, cfg[CONF_SENSOR_CONSUMO])
         # Sin valor por defecto: con la consigna desconocida no se sabe si
         # la bomba está modulando cerca de ella, y no se entrena (antes se
         # suponían 28 °C y se aprendía igualmente).
@@ -172,8 +220,15 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         if t_agua is not None:
             self._calcular_predicciones(t_agua)
 
-        if modo_activo and consumo is not None and self._predictions[modo_activo] is not None:
-            self._errors[modo_activo] = round(consumo - self._predictions[modo_activo], 1)
+        # El error solo tiene sentido en el modo que está funcionando: el del
+        # otro se quedaba con el valor de la última vez que estuvo activo.
+        for modo_key in MODOS:
+            prediccion = self._predictions[modo_key]
+            self._errors[modo_key] = (
+                round(consumo - prediccion, 1)
+                if modo_key == modo_activo and consumo is not None and prediccion is not None
+                else None
+            )
 
         # ENTRENAMIENTO SGD
         condiciones = {
@@ -199,7 +254,13 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
         }
 
         if can_train:
-            lr = cfg.get(CONF_LEARNING_RATE, DEFAULT_LEARNING_RATE)
+            # Acotada también aquí: una entrada guardada con una tasa de antes
+            # de bajar el máximo (§R.7) no debe hacer diverger el modelo.
+            lr = _clamp(
+                float(cfg.get(CONF_LEARNING_RATE, DEFAULT_LEARNING_RATE)),
+                MIN_LEARNING_RATE,
+                MAX_LEARNING_RATE,
+            )
             w  = self._weights[modo_activo]
             y_pred = w["w0"] + w["w2"] * t_agua
             error  = consumo - y_pred
@@ -220,10 +281,9 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
                 minutos_bomba, minutos_modo, w,
             )
 
-            await self._store.async_save({
-                "weights": self._weights,
-                "samples": self._samples,
-            })
+            # Retrasado: no hace falta escribir en disco cada 5 minutos.
+            self._sin_guardar = True
+            self._store.async_delay_save(self._datos, RETRASO_GUARDADO)
         elif bomba_on and modo_activo is not None:
             _LOGGER.debug(
                 "SGD %s: muestra descartada (%s)",
@@ -239,10 +299,9 @@ class BombaCalorCoordinator(DataUpdateCoordinator):
             "boost":  dict(PRIORS["boost"]),
         }
         self._samples = {"silent": 0, "boost": 0}
-        await self._store.async_save({
-            "weights": self._weights,
-            "samples": self._samples,
-        })
+        self._errors = {"silent": None, "boost": None}
+        self._last_trained = {"silent": None, "boost": None}
+        await self._store.async_save(self._datos())
         await self.async_refresh()
         _LOGGER.info("Modelo reseteado a priors SC984 (2 parametros)")
 

@@ -41,9 +41,16 @@ WEIGHT_LIMITS = {
 
 DEFAULT_LEARNING_RATE = 0.0001
 # Mismo rango en el alta, las opciones y el servicio set_learning_rate: con 0
-# el modelo no aprende nunca, y por encima de 0.1 diverge en pocas muestras.
+# el modelo no aprende nunca. El tope sale de la estabilidad del SGD con
+# T_agua sin centrar: cada muestra es estable solo si
+# lr * (1 + T_agua²) < 2, es decir lr < ~0,0025 con el agua a 28 °C y
+# < ~0,0019 a 32 °C. Con 0,001 queda margen hasta ~44 °C. Antes se admitía
+# hasta 0,1, que diverge en una sola muestra (DECISIONES §R.7).
 MIN_LEARNING_RATE = 0.000001
-MAX_LEARNING_RATE = 0.1
+MAX_LEARNING_RATE = 0.001
+# Segundos de retraso al guardar el modelo tras aprender una muestra (una
+# cada 5 min como mucho). Al descargar la entrada o parar HA se guarda ya.
+RETRASO_GUARDADO = 600
 MIN_CONSUMO_VALIDO = 200.0
 MARGEN_MODULACION = 1.0
 MIN_TIEMPO_ESTABLE_MINUTOS = 10

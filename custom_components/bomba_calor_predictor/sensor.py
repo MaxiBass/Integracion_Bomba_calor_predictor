@@ -18,19 +18,19 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from . import BombaCalorConfigEntry
 from .coordinator import BombaCalorCoordinator
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: BombaCalorConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: BombaCalorCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities([
         BdcPredictionSensor(coordinator, "silent", entry),
         BdcPredictionSensor(coordinator, "boost",  entry),
@@ -44,10 +44,11 @@ async def async_setup_entry(
 class _BdcSensor(CoordinatorEntity, SensorEntity):
     """Base de los seis sensores.
 
-    Sin dispositivo a propósito: en HA 2026.9, colgarlos de uno hace que una
+    Sin dispositivo a propósito: colgarlos de uno con `has_entity_name` (lo
+    que pide HA para las entidades de un dispositivo) hace que una
     instalación nueva genere los entity_id con su nombre delante
     (`sensor.bomba_calor_predictor_sc984_bdc_…`), y las plantillas de la
-    piscina dependen de `sensor.bdc_*` (DECISIONES §R.3).
+    piscina dependen de `sensor.bdc_*` (DECISIONES §R.3 y §R.5).
     """
 
     def __init__(
@@ -89,8 +90,10 @@ class BdcPredictionSensor(_BdcSensor):
 
 
 class BdcErrorSensor(_BdcSensor):
-    """Error de prediccion actual (W) = real - predicho."""
+    """Error de prediccion actual (W) = real - predicho. Sin valor si ese
+    modo no está funcionando."""
 
+    _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_icon = "mdi:delta"

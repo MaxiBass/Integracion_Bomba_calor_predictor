@@ -211,7 +211,7 @@ class Contexto:
 
     @property
     def coord(self):
-        return self.hass.data[DOMINIO][self.entrada.entry_id]
+        return self.entrada.runtime_data
 
     def estado(self, unique_suffix: str):
         return self.hass.states.get(_entidad(self.hass, f"{self.entrada.entry_id}_{unique_suffix}"))
@@ -252,6 +252,7 @@ async def _recorrido(directorio: Path) -> None:
                 ("aprendizaje", _aprendizaje),
                 ("arranque", _arranque),
                 ("tope", _tope),
+                ("estabilidad", _estabilidad),
                 ("servicios", _servicios),
                 ("opciones", _opciones),
                 ("diagnóstico", _diagnostico),
@@ -307,8 +308,8 @@ async def _alta(ctx: Contexto) -> None:
               f"una entidad que no existe se rechaza ({errores})")
     ok, _ = await rechazada({**DATOS_ALTA, "learning_rate": 0})
     comprobar(ok, "una learning rate de 0 se rechaza (con 0 el modelo no aprende nunca)")
-    ok, _ = await rechazada({**DATOS_ALTA, "learning_rate": 5})
-    comprobar(ok, "y una de 5 también (el mismo rango que el servicio: 0,000001–0,1)")
+    ok, _ = await rechazada({**DATOS_ALTA, "learning_rate": 0.002})
+    comprobar(ok, "y una de 0,002 también: con el agua a 32 °C el SGD diverge (rango 0,000001–0,001, §R.7)")
 
     fin = await _formulario(hass, dict(DATOS_ALTA))
     await hass.async_block_till_done()
@@ -376,8 +377,8 @@ async def _aprendizaje(ctx: Contexto) -> None:
     comprobar(ctx.muestras["silent"] == 1, f"a los 11 minutos aprende una muestra Silent ({ctx.muestras})")
     error = ctx.estado("error_silent").state
     comprobar(error == str(round(1100 - 872.0, 1)), f"error = real − predicho ({error})")
-    guardado = json.loads((ctx.directorio / ".storage" / "bomba_calor_predictor_model").read_text("utf-8"))
-    comprobar(guardado["data"]["samples"]["silent"] == 1, "y guarda el modelo en disco")
+    fichero = ctx.directorio / ".storage" / "bomba_calor_predictor_model"
+    comprobar(not fichero.exists(), "no escribe en disco en cada muestra (guardado retrasado)")
 
     ctx.poner(CONSIGNA, "unavailable")
     await ctx.ciclo(5)
@@ -418,6 +419,8 @@ async def _aprendizaje(ctx: Contexto) -> None:
     ctx.poner(CONSUMO, 2400)
     await ctx.ciclo(5)
     comprobar(ctx.muestras["boost"] == 0, "recién pasada a Boost no aprende")
+    comprobar(ctx.estado("error_silent").state == "unknown" and ctx.estado("error_boost").state != "unknown",
+              "el error de Silent se vacía cuando la bomba está en Boost")
     await ctx.ciclo(6)
     comprobar(ctx.muestras["boost"] == 1,
               f"a los 11 minutos del cambio real a Boost aprende, aunque la integración lo viera 5 min tarde ({ctx.muestras})")
@@ -439,6 +442,9 @@ async def _arranque(ctx: Contexto) -> None:
     comprobar(estado != "unknown",
               f"en cuanto llega la temperatura hay predicción, sin esperar 5 minutos ({estado})")
     comprobar(ctx.muestras["boost"] == 1, "y el modelo guardado se conserva tras recargar")
+    guardado = json.loads((ctx.directorio / ".storage" / "bomba_calor_predictor_model").read_text("utf-8"))
+    comprobar(guardado["data"]["samples"] == {"silent": 3, "boost": 1},
+              f"al descargar se escribe lo pendiente ({guardado['data']['samples']})")
 
 
 async def _tope(ctx: Contexto) -> None:
@@ -465,10 +471,63 @@ async def _tope(ctx: Contexto) -> None:
     estado = await predecir_con({"w0": 4000.0, "w2": 100.0})
     comprobar(estado == "1500.0", f"pero un modelo que se dispara sigue acotado a 1500 W ({estado})")
 
+    contenido = json.loads(original)
+    contenido["data"]["weights"] = {"silent": {"w0": 950.0, "w2": -3.0}}
+    contenido["data"]["samples"] = {"silent": 4}
+    fichero.write_text(json.dumps(contenido), "utf-8")
+    await hass.config_entries.async_reload(entrada.entry_id)
+    await hass.async_block_till_done()
+    comprobar(ctx.estado("prediccion_boost").state == "2290.0" and ctx.muestras == {"silent": 4, "boost": 0},
+              f"un fichero sin el modo Boost arranca ese modo con los priores, sin KeyError ({ctx.estado('prediccion_boost').state})")
+
     fichero.write_text(original, "utf-8")
     ctx.poner(BOMBA, "on")
     await hass.config_entries.async_reload(entrada.entry_id)
     await hass.async_block_till_done()
+
+
+async def _estabilidad(ctx: Contexto) -> None:
+    hass = ctx.hass
+    print("\n  · estabilidad del SGD y consumo en kW")
+    await hass.services.async_call(DOMINIO, "set_learning_rate", {"learning_rate": 0.001}, blocking=True)
+    comprobar(await _rechaza_servicio(hass, {"learning_rate": 0.002}),
+              "el servicio no admite tasas por encima de 0,001")
+    # Agua a 32 °C (consigna 36) con la tasa máxima: antes, con hasta 0,1,
+    # los pesos se disparaban hasta los límites en una muestra.
+    ctx.poner(CONSIGNA, 36)
+    ctx.poner(T_AGUA, 32.0)
+    ctx.poner(CONSUMO, 1.4, unit_of_measurement="kW")
+    await ctx.ciclo(11)
+    antes = ctx.muestras["silent"]
+    errores = []
+    for _ in range(40):
+        await ctx.ciclo(5)
+        errores.append(abs(float(ctx.estado("error_silent").state)))
+    comprobar(ctx.muestras["silent"] == antes + 40,
+              f"un consumo en kW se pasa a W y aprende (antes 1,4 < 200 W y nunca aprendía) ({ctx.muestras})")
+    from custom_components.bomba_calor_predictor.const import WEIGHT_LIMITS
+
+    w = ctx.coord.weights["silent"]
+    comprobar(errores[-1] < errores[0] and errores[-1] < 20
+              and WEIGHT_LIMITS["w2"][0] < w["w2"] < WEIGHT_LIMITS["w2"][1],
+              f"con la tasa máxima y el agua a 32 °C converge (error {errores[0]:.0f} → {errores[-1]:.0f} W, w2={w['w2']})")
+    ctx.poner(CONSIGNA, 30)
+    ctx.poner(T_AGUA, 26.0)
+    ctx.poner(CONSUMO, 1100, unit_of_measurement="W")
+    # Bomba recién encendida otra vez, para que lo siguiente no aprenda.
+    ctx.poner(BOMBA, "off")
+    ctx.poner(BOMBA, "on")
+    await hass.async_block_till_done()
+
+
+async def _rechaza_servicio(hass, datos: dict) -> bool:
+    import voluptuous as vol
+
+    try:
+        await hass.services.async_call(DOMINIO, "set_learning_rate", datos, blocking=True)
+    except vol.Invalid:
+        return True
+    return False
 
 
 async def _servicios(ctx: Contexto) -> None:
@@ -487,6 +546,10 @@ async def _servicios(ctx: Contexto) -> None:
     comprobar(ctx.muestras == {"silent": 0, "boost": 0} and pesos["silent"] == {"w0": 950.0, "w2": -3.0}
               and pesos["boost"] == {"w0": 1900.0, "w2": 15.0},
               "reset_modelo vuelve a los priores y pone las muestras a 0")
+    comprobar(all(v is None for v in ctx.coord.last_trained.values()) and ctx.coord._errors["boost"] is None,
+              "y olvida la última muestra aprendida y los errores del modelo anterior")
+    error = ctx.estado("error_silent")
+    comprobar(error.attributes.get("device_class") == "power", "el error es una potencia (device_class power)")
 
 
 async def _opciones(ctx: Contexto) -> None:
@@ -549,12 +612,20 @@ async def _recarga(ctx: Contexto) -> None:
     print("\n  · descarga y borrado")
     await hass.config_entries.async_unload(entrada.entry_id)
     await hass.async_block_till_done()
-    comprobar(entrada.state is ConfigEntryState.NOT_LOADED and not hass.services.has_service(DOMINIO, "reset_modelo"),
-              "al descargar, quita sus servicios")
+    from homeassistant.exceptions import ServiceValidationError
+
+    try:
+        await hass.services.async_call(DOMINIO, "reset_modelo", {}, blocking=True)
+        aviso = None
+    except ServiceValidationError as err:
+        aviso = err.translation_key
+    comprobar(entrada.state is ConfigEntryState.NOT_LOADED and hass.services.has_service(DOMINIO, "reset_modelo")
+              and aviso == "no_cargada",
+              f"descargada, los servicios siguen (async_setup) y avisan de que no está cargada ({aviso})")
     await hass.config_entries.async_setup(entrada.entry_id)
     await hass.async_block_till_done()
-    comprobar(entrada.state is ConfigEntryState.LOADED and hass.services.has_service(DOMINIO, "reset_modelo"),
-              "y al volver a cargar, los registra")
+    await hass.services.async_call(DOMINIO, "reset_modelo", {}, blocking=True)
+    comprobar(entrada.state is ConfigEntryState.LOADED, "y al volver a cargar, funcionan")
     await hass.config_entries.async_remove(entrada.entry_id)
     await hass.async_block_till_done()
     comprobar(not hass.config_entries.async_entries(DOMINIO), "la entrada se borra sin errores")
@@ -564,7 +635,9 @@ def test_home_assistant() -> None:
     try:
         import homeassistant  # noqa: F401
     except ImportError:
-        print("\nHome Assistant no instalado: se saltan las pruebas de integración")
+        # Cuenta como fallo: un «Todo OK» sin el bloque de HA engañaría.
+        print("\nAVISO: Home Assistant no instalado: se saltan las pruebas de integración")
+        fallos.append("bloque de Home Assistant saltado (instala homeassistant en el venv)")
         return
 
     print("\nIntegración en un Home Assistant real")

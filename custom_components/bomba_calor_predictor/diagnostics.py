@@ -11,18 +11,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from . import BombaCalorConfigEntry
 from .config_flow import ENTIDADES
-from .const import CLAMP, DOMAIN
-from .coordinator import BombaCalorCoordinator
+from .const import CLAMP
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: BombaCalorConfigEntry
 ) -> dict[str, Any]:
-    coordinator: BombaCalorCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     config = coordinator.config
     fuentes = {}
     for clave in ENTIDADES:

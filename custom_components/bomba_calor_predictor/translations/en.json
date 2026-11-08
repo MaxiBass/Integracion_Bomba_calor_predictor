@@ -17,7 +17,7 @@
         "data_description": {
           "modo_silent_value": "Exactly as the mode select publishes it, including case and underscores: if it does not match, the Silent model never learns.",
           "modo_boost_value": "Exactly as the mode select publishes it, including case and underscores: if it does not match, the Boost model never learns.",
-          "learning_rate": "Between 0.000001 and 0.1. Suggested: 0.0005 to start, 0.0002 to refine, 0.00005 for maintenance."
+          "learning_rate": "Between 0.000001 and 0.001. Suggested: 0.0005 to start, 0.0002 to refine, 0.00005 for maintenance."
         }
       }
     },
@@ -42,6 +42,11 @@
           "modo_silent_value": "Silent mode value (e.g. Silent_heat)",
           "modo_boost_value": "Boost mode value (e.g. Boost_heat)",
           "learning_rate": "SGD learning rate"
+        },
+        "data_description": {
+          "modo_silent_value": "Exactly as the mode select publishes it, including case and underscores: if it does not match, the Silent model never learns.",
+          "modo_boost_value": "Exactly as the mode select publishes it, including case and underscores: if it does not match, the Boost model never learns.",
+          "learning_rate": "Between 0.000001 and 0.001. Suggested: 0.0005 to start, 0.0002 to refine, 0.00005 for maintenance."
         }
       }
     },
@@ -60,9 +65,14 @@
       "fields": {
         "learning_rate": {
           "name": "Learning rate",
-          "description": "Value between 0.000001 and 0.1. Default 0.0001."
+          "description": "Value between 0.000001 and 0.001. Default 0.0001."
         }
       }
+    }
+  },
+  "exceptions": {
+    "no_cargada": {
+      "message": "The integration is not loaded: there is no model to work with."
     }
   }
 }
